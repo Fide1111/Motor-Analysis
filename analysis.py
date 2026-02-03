@@ -237,9 +237,32 @@ with col3:
 st.markdown("### Yearly Trend (Line Chart)")
 
 if 'policy_year' in df_view.columns:
-    numeric_cols = df_view.select_dtypes(include=[np.number]).columns.tolist()
-    exclude = ['policy_year', 'manufacture_year', 'seat_no', 'cc']
+    numeric_cols = df_view.select_dtypes(include='number').columns.tolist()
+    exclude = ['policy_year', 'manufacture_year', 'seat_no', 'cc']  # adjust as needed
     trend_vars = [c for c in numeric_cols if c not in exclude and df_view[c].notna().any()]
+
+    if not trend_vars:
+        st.info("No suitable numeric columns found for trending.")
+    else:
+        selected_items = st.selectbox(
+            "Select column to analyze / trend",
+            options=trend_vars,
+            index=trend_vars.index('actual_written_prem') if 'actual_written_prem' in trend_vars else 0,
+            help="Only numeric columns are shown here"
+        )
+
+        # Safety check + force numeric
+        if selected_items not in df_view.select_dtypes(include='number').columns:
+            st.error(f"Column '{selected_items}' is not numeric → cannot compute average.")
+        else:
+            # Convert to numeric just in case (coerce errors → NaN)
+            df_view['value_for_trend'] = pd.to_numeric(df_view[selected_items], errors='coerce')
+
+            # Now aggregate (use the coerced column)
+            trend_df = df_view.groupby('policy_year').agg(
+                Average=('value_for_trend', 'mean'),
+                Policies=('policy_year', 'count')   # count policies, not values
+            ).reset_index()
 
     if trend_vars:
         # Calculate yearly average + count
