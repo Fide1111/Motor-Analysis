@@ -243,9 +243,9 @@ if 'policy_year' in df_view.columns:
 
     if trend_vars:
         # Calculate yearly average + count
-        trend_df = df_view.groupby('policy_year')[selected_items].agg(
-            Average='mean',
-            Policies='count'
+        trend_df = df_view.groupby('policy_year').agg(
+            Average=(selected_items, 'mean'),
+            Policies=(selected_items, 'count')   # count is same regardless of column
         ).reset_index()
 
         if len(trend_df) > 1:
