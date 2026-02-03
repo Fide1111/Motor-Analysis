@@ -68,7 +68,8 @@ categorical_cols = [
 numerical_cols = [
     'sum_insured', 'basic_prem', 'actual_written_prem',
     'policy_excess', 'gross_weight', 'manufacture_year',
-    'vehicle_age', 'no_claim_discount', 'no_intermediary_discount'
+    'driver_age','vehicle_age', 'no_claim_discount', 
+    'no_intermediary_discount',    
 ]
 
 expensive_brand = [
