@@ -23,8 +23,6 @@ df = load_data()
 if df is None:
     st.stop()
 
-
-
 # ────────────────────────────────────────────────
 #  Prepare year column (using policy effective date)
 # ────────────────────────────────────────────────
@@ -83,7 +81,6 @@ ch_brand = [
     'NIO', 'ORA', 'TRUMPCHI', 'WELTMEISTER', 'XIAOMI', 'XPENG', 'ZEEKR'
 ]
 
-
 date_cols = [c for c in ['policy_effect_date', 'driver_DOB'] if c in df.columns]
 
 all_displayable = [c for c in categorical_cols + numerical_cols + date_cols if c in df.columns]
@@ -93,10 +90,7 @@ all_displayable = [c for c in categorical_cols + numerical_cols + date_cols if c
 # ────────────────────────────────────────────────
 st.markdown("### Display Controls")
 
-colA, colB, colC, colD = st.columns([2, 2.5, 2, 1.5])
-
-with colA:
-    view_mode = st.radio("View mode", ["📊 Charts", "📋 Numbers"], horizontal=True)
+colB, colC = st.columns([3, 3])
 
 with colB:
     # Only show columns that can reasonably be averaged / trended
@@ -127,13 +121,6 @@ with colC:
         )
     else:
         selected_years = None
-
-with colD:
-    yearly_mode = st.checkbox("Show by year", value=True) if year_col_name else False
-
-if not selected_items:
-    st.info("Select at least one column.")
-    st.stop()
 
 # Filter years if selected
 if selected_years and year_col_name:
@@ -261,29 +248,29 @@ with col3:
 # ────────────────────────────────────────────────
 #  Yearly Trend Line Chart – Select Any Numeric Variable
 # ────────────────────────────────────────────────
-st.markdown("### Yearly Trend – Average Written Premium & Policy Count")
+st.markdown("### Yearly Trend")
 
-if year_col_name in df_view.columns:
+if year_col_name and selected_items:
     trend_df = df_view.groupby(year_col_name).agg(
-        Avg_Premium=('actual_written_prem', 'mean'),
-        Median_Premium=('actual_written_prem', 'median'),
-        Policy_Count=('actual_written_prem', 'count')
+        Average=(selected_items, 'mean'),
+        Median=(selected_items, 'median'),
+        Policy_Count=(year_col_name, 'count')
     ).reset_index()
 
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
         x=trend_df[year_col_name],
-        y=trend_df['Avg_Premium'],
-        name='Avg Premium',
+        y=trend_df['Average'],
+        name='Average',
         line=dict(color='#1f77b4', width=3),
         mode='lines+markers'
     ))
 
     fig.add_trace(go.Scatter(
         x=trend_df[year_col_name],
-        y=trend_df['Median_Premium'],
-        name='Median Premium',
+        y=trend_df['Median'],
+        name='Median',
         line=dict(color='#2ca02c', dash='dot', width=2),
         mode='lines+markers'
     ))
@@ -297,10 +284,12 @@ if year_col_name in df_view.columns:
         marker_color='lightgray'
     ))
 
+    selected_title = selected_items.replace('_', ' ').title()
+
     fig.update_layout(
-        title="Yearly Trend: Premium & Policy Volume",
+        title=f"Yearly Trend: {selected_title} & Policy Volume",
         xaxis_title="Policy Year",
-        yaxis_title="Premium Amount",
+        yaxis_title=selected_title,
         yaxis2=dict(title="Number of Policies", overlaying='y', side='right'),
         hovermode='x unified',
         height=520,
@@ -312,20 +301,20 @@ if year_col_name in df_view.columns:
 
     with st.expander("Raw yearly numbers"):
         st.dataframe(trend_df.style.format({
-            'Avg_Premium': '{:,.0f}',
-            'Median_Premium': '{:,.0f}',
+            'Average': '{:,.2f}',
+            'Median': '{:,.2f}',
             'Policy_Count': '{:,}'
         }), use_container_width=True, hide_index=True)
 else:
-    st.info("Cannot show yearly trend – missing policy_year column.")
+    st.info("Cannot show yearly trend – missing policy_year column or no column selected.")
 
 # ────────────────────────────────────────────────
 #  Original per-column rendering (kept as-is)
 # ────────────────────────────────────────────────
-show_charts = "Charts" in view_mode
-show_yearly = yearly_mode and year_col_name and df_view[year_col_name].notna().any()
-
-for col in selected_items:
+if selected_items:
+    show_charts = True  # Hard-coded since colA removed
+    show_yearly = True  # Hard-coded since colD removed
+    col = selected_items  # Since single selection, no loop needed
 
     if col in categorical_cols:
         if show_yearly:
