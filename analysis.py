@@ -130,6 +130,9 @@ else:
 
 brand_col = next((c for c in ['vehicle_brand', 'Vehicle_Brand', 'brand'] if c in df_view.columns), None)
 
+if 'gross_weight' in df_view.columns:
+    df_view['gross_weight'] = pd.to_numeric(df_view['gross_weight'], errors='coerce')
+
 @st.cache_data
 def compute_insights(df):
     insights = {}
