@@ -23,6 +23,8 @@ df = load_data()
 if df is None:
     st.stop()
 
+
+
 # ────────────────────────────────────────────────
 #  Prepare year column (using policy effective date)
 # ────────────────────────────────────────────────
@@ -38,6 +40,24 @@ else:
     st.warning("No policy effective date column found → yearly view disabled")
     df[year_col_name] = pd.NA
     year_col_name = None
+
+if 'driver_age' in df.columns:
+    df['driver_age'] = pd.to_numeric(df['driver_age'], errors='coerce')
+
+if 'vehicle_age' in df.columns:
+    df['vehicle_age'] = pd.to_numeric(df['vehicle_age'], errors='coerce')
+
+# Calculate missing ages
+if 'driver_DOB' in df.columns and main_date_col:
+    df['driver_DOB'] = pd.to_datetime(df['driver_DOB'], errors='coerce')
+    ref_date = df[main_date_col].max()                      # or .mean(), or pd.Timestamp('2025-12-31')
+    df['driver_age'] = (ref_date - df['driver_DOB']).dt.days / 365.25
+    df['driver_age'] = df['driver_age'].round(1).clip(16, 100)
+
+# Same for vehicle_age if missing / unreliable
+if 'manufacture_year' in df.columns and main_date_col:
+    df['vehicle_age'] = df[main_date_col].dt.year - df['manufacture_year']
+    df['vehicle_age'] = df['vehicle_age'].clip(0, 40)      # reasonable bounds
 
 # ────────────────────────────────────────────────
 #  Column groups
@@ -207,136 +227,97 @@ st.markdown("### Key Portfolio Insights")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    if 'driver_age' in insights:
-        st.metric("Average Driver Age", f"{insights['driver_age']['stats']['mean']:.1f}")
-        young_pct = (
-            insights['driver_age']['distribution'].get('18-24', {'%':0})['%'] +
-            insights['driver_age']['distribution'].get('25-29', {'%':0})['%']
-        )
-        st.caption(f"Young drivers (18-29): {young_pct:.1f}%")
+    if 'driver_age' in df_view.columns:
+        valid = df_view['driver_age'].notna() & df_view['driver_age'].between(16, 100)
+        if valid.sum() > 0:
+            avg_age = df_view.loc[valid, 'driver_age'].mean()
+            st.metric("Average Driver Age", f"{avg_age:.1f}")
+            young = df_view['driver_age'].between(18, 29).sum()
+            young_pct = young / len(df_view) * 100 if len(df_view) > 0 else 0
+            st.caption(f"Young drivers (18–29): {young_pct:.1f}%  |  {young:,} policies")
+        else:
+            st.metric("Average Driver Age", "—", delta="No valid ages")
     else:
-        st.metric("Average Driver Age", "—")
+        st.metric("Average Driver Age", "—", delta="Column missing")
 
 with col2:
-    if 'ncd' in insights:
-        st.metric("% with NCD", f"{insights['ncd']['pct_with']:.1f}%")
-        st.caption(f"{insights['ncd']['with']:,} policies")
+    if 'no_claim_discount' in df_view.columns:
+        has_ncd = (df_view['no_claim_discount'] > 0).sum()
+        pct_ncd = has_ncd / len(df_view) * 100 if len(df_view) > 0 else 0
+        st.metric("% with NCD", f"{pct_ncd:.1f}%")
+        st.caption(f"{has_ncd:,} policies")
     else:
         st.metric("% with NCD", "—")
 
 with col3:
-    if 'intermediary_discount' in insights:
-        st.metric("% with Intermediary Discount", f"{insights['intermediary_discount']['pct_with']:.1f}%")
-        st.caption(f"{insights['intermediary_discount']['with']:,} policies")
+    if 'no_intermediary_discount' in df_view.columns:
+        has_inter = (df_view['no_intermediary_discount'] > 0).sum()
+        pct_inter = has_inter / len(df_view) * 100 if len(df_view) > 0 else 0
+        st.metric("% with Intermediary Discount", f"{pct_inter:.1f}%")
+        st.caption(f"{has_inter:,} policies")
     else:
         st.metric("% with Intermediary Discount", "—")
 
 # ────────────────────────────────────────────────
 #  Yearly Trend Line Chart – Select Any Numeric Variable
 # ────────────────────────────────────────────────
-st.markdown("### Yearly Trend (Line Chart)")
+st.markdown("### Yearly Trend – Average Written Premium & Policy Count")
 
-if 'policy_year' in df_view.columns:
-    numeric_cols = df_view.select_dtypes(include='number').columns.tolist()
-    exclude = ['policy_year', 'manufacture_year', 'seat_no', 'cc']  # adjust as needed
-    trend_vars = [c for c in numeric_cols if c not in exclude and df_view[c].notna().any()]
+if year_col_name in df_view.columns:
+    trend_df = df_view.groupby(year_col_name).agg(
+        Avg_Premium=('actual_written_prem', 'mean'),
+        Median_Premium=('actual_written_prem', 'median'),
+        Policy_Count=('actual_written_prem', 'count')
+    ).reset_index()
 
-    if not trend_vars:
-        st.info("No suitable numeric columns found for trending.")
-    else:
-        selected_items = st.selectbox(
-            "Select column to analyze / trend",
-            options=trend_vars,
-            index=trend_vars.index('actual_written_prem') if 'actual_written_prem' in trend_vars else 0,
-            help="Only numeric columns are shown here"
-        )
+    fig = go.Figure()
 
-        # Safety check + force numeric
-        if selected_items not in df_view.select_dtypes(include='number').columns:
-            st.error(f"Column '{selected_items}' is not numeric → cannot compute average.")
-        else:
-            # Convert to numeric just in case (coerce errors → NaN)
-            df_view['value_for_trend'] = pd.to_numeric(df_view[selected_items], errors='coerce')
+    fig.add_trace(go.Scatter(
+        x=trend_df[year_col_name],
+        y=trend_df['Avg_Premium'],
+        name='Avg Premium',
+        line=dict(color='#1f77b4', width=3),
+        mode='lines+markers'
+    ))
 
-            # Now aggregate (use the coerced column)
-            trend_df = df_view.groupby('policy_year').agg(
-                Average=('value_for_trend', 'mean'),
-                Policies=('policy_year', 'count')   # count policies, not values
-            ).reset_index()
+    fig.add_trace(go.Scatter(
+        x=trend_df[year_col_name],
+        y=trend_df['Median_Premium'],
+        name='Median Premium',
+        line=dict(color='#2ca02c', dash='dot', width=2),
+        mode='lines+markers'
+    ))
 
-    if trend_vars:
-        # Calculate yearly average + count
-        trend_df = df_view.groupby('policy_year').agg(
-            Average=(selected_items, 'mean'),
-            Policies=(selected_items, 'count')   # count is same regardless of column
-        ).reset_index()
+    fig.add_trace(go.Bar(
+        x=trend_df[year_col_name],
+        y=trend_df['Policy_Count'],
+        name='Policy Count',
+        yaxis='y2',
+        opacity=0.3,
+        marker_color='lightgray'
+    ))
 
-        if len(trend_df) > 1:
-            fig = go.Figure()
+    fig.update_layout(
+        title="Yearly Trend: Premium & Policy Volume",
+        xaxis_title="Policy Year",
+        yaxis_title="Premium Amount",
+        yaxis2=dict(title="Number of Policies", overlaying='y', side='right'),
+        hovermode='x unified',
+        height=520,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02),
+        xaxis=dict(dtick=1)
+    )
 
-            # Main line
-            fig.add_trace(go.Scatter(
-                x=trend_df['policy_year'],
-                y=trend_df['Policies'],
-                mode='lines+markers+text',
-                line=dict(color='royalblue', width=3),
-                marker=dict(size=10),
-                textposition='top center',
-                hovertemplate='Year: %{x}Policies: %{customdata:,}<extra></extra>',
-                customdata=trend_df['Policies']
-            ))
+    st.plotly_chart(fig, use_container_width=True)
 
-
-            fig.update_layout(
-                title=f"Yearly Trend: Average {selected_items.replace('_', ' ').title()}",
-                xaxis_title="Policy Year",
-                yaxis_title=f"Average {selected_items.replace('_', ' ').title()}",
-                yaxis2=dict(
-                    title="Number of Policies",
-                    overlaying='y',
-                    side='right',
-                    showgrid=False
-                ),
-                height=550,
-                hovermode='x unified',
-                legend=dict(x=0.01, y=0.99),
-                xaxis=dict(
-                    dtick=1,
-                    tickformat='d'
-                )
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Yearly table (average + count)
-            with st.expander("Yearly Summary Table"):
-                if len(trend_df) > 0:
-                    total_policies = trend_df['Policies'].sum()
-                    
-                    summary_df = trend_df[['policy_year', 'Policies']].copy()
-                    summary_df['Percentage'] = (summary_df['Policies'] / total_policies * 100).round(1)
-                    summary_df['Display'] = summary_df.apply(
-                        lambda row: f"{row['Policies']:,} ({row['Percentage']}%)", axis=1
-                    )
-                    
-                    # Optional: nicer column names
-                    display_df = summary_df[['policy_year', 'Display']].rename(
-                        columns={'policy_year': 'Policy Year', 'Display': f'Policies ({total_policies:,} total)'}
-                    )
-                    
-                    st.dataframe(
-                        display_df.style.set_properties(**{'text-align': 'left'}),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                else:
-                    st.info("No data available")
-        else:
-            st.info("Only one year in data – no trend to show")
-    else:
-        st.info("No numeric columns available for trend")
+    with st.expander("Raw yearly numbers"):
+        st.dataframe(trend_df.style.format({
+            'Avg_Premium': '{:,.0f}',
+            'Median_Premium': '{:,.0f}',
+            'Policy_Count': '{:,}'
+        }), use_container_width=True, hide_index=True)
 else:
-    st.info("No 'policy_year' column – yearly trend unavailable")
+    st.info("Cannot show yearly trend – missing policy_year column.")
 
 # ────────────────────────────────────────────────
 #  Original per-column rendering (kept as-is)
@@ -436,7 +417,7 @@ group_candidates = [
 compare_candidates = [
     'actual_written_prem', 'sum_insured', 'basic_prem',
     'policy_excess', 'no_claim_discount',
-    'no_intermediary_discount', 'group_discount', 'vehicle_age',
+    'no_intermediary_discount', 'vehicle_age',
     'driver_age'
 ]
 
